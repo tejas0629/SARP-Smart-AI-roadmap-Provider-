@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 
 from .models import ChatMessage
 from .serializers import ChatRequestSerializer
-from .services import GeminiConfigurationError, GeminiResponseError, generate_learning_response
+from .services import GeminiConfigurationError, GeminiResponseError, GroqConfigurationError, GroqResponseError, generate_learning_response
 
 
 class ChatAPIView(APIView):
@@ -19,6 +19,11 @@ class ChatAPIView(APIView):
             return Response({'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except GeminiResponseError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        except (GroqConfigurationError, GroqResponseError):
+            return Response(
+                {'error': 'AI service is temporarily unavailable. Please try again shortly.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
         except Exception:
             return Response(
                 {'error': 'AI service is temporarily unavailable. Please try again shortly.'},
@@ -26,10 +31,12 @@ class ChatAPIView(APIView):
             )
 
         try:
-            ChatMessage.objects.bulk_create([
-                ChatMessage(role='user', message=user_message),
-                ChatMessage(role='assistant', message=ai_response),
-            ])
+            ChatMessage.objects.bulk_create(
+                [
+                    ChatMessage(role='user', message=user_message),
+                    ChatMessage(role='assistant', message=ai_response),
+                ]
+            )
         except Exception:
             pass
 

@@ -2,13 +2,13 @@
 
 ## Overview
 
-Phase 1 is a full-stack application that turns a natural-language learning goal into a personalized AI response and structured learning roadmap. The React interface sends messages to Django; only Django calls Google Gemini.
+Phase 1 is a full-stack application that turns a natural-language learning goal into a personalized AI response and structured learning roadmap. The React interface sends messages to Django; only Django calls the AI providers.
 
 ## Tech Stack
 
 - Frontend: React, Vite, JavaScript, CSS
 - Backend: Python, Django, Django REST Framework
-- AI: Google Gemini through the official `google-genai` Python SDK
+- AI: Google Gemini through the official `google-genai` Python SDK, with Groq fallback through its official Python SDK
 - Database: MySQL through the Django ORM
 - Configuration: `.env` loaded by `python-dotenv`
 
@@ -18,7 +18,7 @@ Phase 1 is a full-stack application that turns a natural-language learning goal 
 React Frontend -> Django REST API -> Google Gemini
       ^                  |                |
       |                  v                v
-      +----------- response JSON <--------+
+      +----------- response JSON <--------+-- Groq fallback
                          |
                        MySQL
 ```
@@ -92,6 +92,19 @@ Put the MySQL connection values in `.env`, then run:
 cd backend
 source .venv/bin/activate
 python manage.py migrate
+```
+
+## AI Provider Configuration
+
+Google Gemini is the primary AI provider. Gemini is always tried first. Groq is used automatically as a fallback only when Gemini is temporarily unavailable because of quota or rate limits, server errors, or connection failures. Both providers return the same response structure, so the frontend does not need to know which provider responded.
+
+Set the provider values in the root `.env` file. Never commit real API keys.
+
+```dotenv
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-3.5-flash-lite
+GROQ_API_KEY=
+GROQ_MODEL=
 ```
 
 ## Gemini Configuration
