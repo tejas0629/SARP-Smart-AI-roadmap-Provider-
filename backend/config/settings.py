@@ -81,6 +81,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', '')
+SERPER_API_KEY = os.getenv('SERPER_API_KEY', '')
 
 if DEBUG:
     LOGGING = {

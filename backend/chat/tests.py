@@ -1,9 +1,10 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.test import APIRequestFactory
 
+from .models import ChatMessage
 from .services import generate_learning_response
 from .views import ChatAPIView
 
@@ -50,54 +51,20 @@ class ProviderFallbackTests(SimpleTestCase):
 
     @patch('chat.services.Groq')
     @patch('chat.services.genai.Client')
-    def test_rate_limit_uses_groq_fallback(self, gemini_client, groq_client):
+    def test_rate_limit_uses_groq_fallback_with_history(self, gemini_client, groq_client):
         error = RuntimeError('rate limited')
         error.status_code = 429
         gemini_client.return_value = self.make_gemini_client(error=error)
         groq_client.return_value = self.make_groq_client(self.groq_payload)
-
         history = [SimpleNamespace(role='user', message='I want to become a Java developer.')]
+
         response = generate_learning_response('Current exp 0', history)
 
         self.assertEqual(response, ('Groq response', {'goal': 'Python'}))
-        gemini_client.assert_called_once()
         groq_client.assert_called_once()
         groq_messages = groq_client.return_value.chat.completions.create.call_args.kwargs['messages']
         self.assertEqual(groq_messages[1]['content'], 'I want to become a Java developer.')
         self.assertEqual(groq_messages[-1]['content'], 'Current exp 0')
-
-    @patch('chat.services.Groq')
-    @patch('chat.services.genai.Client')
-    def test_multi_turn_history_is_sent_to_gemini(self, gemini_client, groq_client):
-        gemini_client.return_value = self.make_gemini_client(self.gemini_payload)
-        history = [
-            SimpleNamespace(role='user', message='I want to become a Java developer.'),
-            SimpleNamespace(role='assistant', message='What is your current experience?'),
-        ]
-
-        generate_learning_response('Current exp 0', history)
-
-        contents = gemini_client.return_value.models.generate_content.call_args.kwargs['contents']
-        self.assertEqual(contents[0]['parts'][0]['text'], 'I want to become a Java developer.')
-        self.assertEqual(contents[1]['role'], 'model')
-        self.assertEqual(contents[-1]['parts'][0]['text'], 'Current exp 0')
-        groq_client.assert_not_called()
-
-    @patch('chat.services.genai.Client')
-    def test_separate_conversation_history_is_not_mixed(self, gemini_client):
-        gemini_client.return_value = self.make_gemini_client(self.gemini_payload)
-        first_conversation = [SimpleNamespace(role='user', message='Java developer')]
-        second_conversation = [SimpleNamespace(role='user', message='Data analyst')]
-
-        generate_learning_response('Current exp 0', first_conversation)
-        generate_learning_response('Current exp 0', second_conversation)
-
-        calls = gemini_client.return_value.models.generate_content.call_args_list
-        first_contents = calls[0].kwargs['contents']
-        second_contents = calls[1].kwargs['contents']
-        self.assertEqual(first_contents[0]['parts'][0]['text'], 'Java developer')
-        self.assertEqual(second_contents[0]['parts'][0]['text'], 'Data analyst')
-        self.assertNotIn('Java developer', str(second_contents))
 
     @patch('chat.services.Groq')
     @patch('chat.services.genai.Client')
@@ -122,6 +89,76 @@ class ProviderFallbackTests(SimpleTestCase):
 
         self.assertEqual(response[0], 'Groq response')
         groq_client.assert_called_once()
+
+    @patch('chat.services.genai.Client')
+    def test_multi_turn_history_is_sent_to_gemini(self, gemini_client):
+        gemini_client.return_value = self.make_gemini_client(self.gemini_payload)
+        history = [
+            SimpleNamespace(role='user', message='I want to become a Java developer.'),
+            SimpleNamespace(role='assistant', message='What is your current experience?'),
+        ]
+
+        generate_learning_response('Current exp 0', history)
+
+        contents = gemini_client.return_value.models.generate_content.call_args.kwargs['contents']
+        self.assertEqual(contents[0]['parts'][0]['text'], 'I want to become a Java developer.')
+        self.assertEqual(contents[1]['role'], 'model')
+        self.assertEqual(contents[-1]['parts'][0]['text'], 'Current exp 0')
+
+    @patch('chat.services.genai.Client')
+    def test_separate_conversation_history_is_not_mixed(self, gemini_client):
+        gemini_client.return_value = self.make_gemini_client(self.gemini_payload)
+        first_conversation = [SimpleNamespace(role='user', message='Java developer')]
+        second_conversation = [SimpleNamespace(role='user', message='Data analyst')]
+
+        generate_learning_response('Current exp 0', first_conversation)
+        generate_learning_response('Current exp 0', second_conversation)
+
+        calls = gemini_client.return_value.models.generate_content.call_args_list
+        self.assertEqual(calls[0].kwargs['contents'][0]['parts'][0]['text'], 'Java developer')
+        self.assertEqual(calls[1].kwargs['contents'][0]['parts'][0]['text'], 'Data analyst')
+        self.assertNotIn('Java developer', str(calls[1].kwargs['contents']))
+
+    @patch('chat.services.requests.post')
+    @patch('chat.services.genai.Client')
+    def test_serper_results_are_evaluated_by_gemini(self, gemini_client, serper_post):
+        client = Mock()
+        client.models.generate_content.side_effect = [
+            SimpleNamespace(text='{"response":"Roadmap ready","roadmap":{"steps":[{"title":"Java syntax","topics":["Keywords"]}]}}'),
+            SimpleNamespace(text='{"topics":[{"topic":"Keywords","study_material":{"website":{"name":"Java tutorial","url":"https://example.com/java-syntax","reason":"Covers Java syntax with examples."},"youtube":{"title":"Java Syntax Tutorial","channel":"Learning Channel","url":"https://www.youtube.com/watch?v=abc123","reason":"Explains syntax for beginners."}}}]}'),
+        ]
+        gemini_client.return_value = client
+        serper_post.side_effect = [
+            Mock(status_code=200, json=lambda: {'organic': [{'title': 'Java syntax', 'link': 'https://example.com/java-syntax', 'snippet': 'Java syntax tutorial'}]}),
+            Mock(status_code=200, json=lambda: {'videos': [{'title': 'Java Syntax Tutorial', 'link': 'https://www.youtube.com/watch?v=abc123', 'channel': 'Learning Channel', 'snippet': 'Java syntax tutorial'}]}),
+        ]
+
+        with patch('chat.services.settings.SERPER_API_KEY', 'serper-test-key'):
+            response, roadmap = generate_learning_response('Create a Java roadmap.')
+
+        self.assertEqual(response, 'Roadmap ready')
+        material = roadmap['steps'][0]['topic_materials'][0]['study_material']
+        self.assertEqual(material['website']['url'], 'https://example.com/java-syntax')
+        self.assertEqual(material['youtube']['url'], 'https://www.youtube.com/watch?v=abc123')
+        selection_prompt = client.models.generate_content.call_args_list[1].kwargs['contents']
+        self.assertIn('https://example.com/java-syntax', selection_prompt)
+        self.assertIn('https://www.youtube.com/watch?v=abc123', selection_prompt)
+
+    @patch('chat.services.requests.post')
+    @patch('chat.services.genai.Client')
+    def test_serper_failure_returns_original_roadmap(self, gemini_client, serper_post):
+        client = Mock()
+        client.models.generate_content.side_effect = [
+            SimpleNamespace(text='{"response":"Roadmap ready","roadmap":{"steps":[{"title":"Java syntax"}]}}'),
+        ]
+        gemini_client.return_value = client
+        serper_post.side_effect = RuntimeError('search unavailable')
+
+        with patch('chat.services.settings.SERPER_API_KEY', 'serper-test-key'):
+            response, roadmap = generate_learning_response('Create a Java roadmap.')
+
+        self.assertEqual(response, 'Roadmap ready')
+        self.assertEqual(roadmap, {'steps': [{'title': 'Java syntax'}]})
 
     @patch('chat.views.ChatMessage.objects.create')
     @patch('chat.views.Conversation.objects.create')
@@ -149,3 +186,36 @@ class ProviderFallbackTests(SimpleTestCase):
             generate_learning_response('Create a roadmap.')
 
         groq_client.assert_not_called()
+
+
+@override_settings(
+    GEMINI_API_KEY='gemini-test-key',
+    GEMINI_MODEL='gemini-test-model',
+    DEBUG=False,
+)
+class ConversationApiTests(TestCase):
+    @patch('chat.views.generate_learning_response')
+    def test_conversation_id_preserves_and_isolates_history(self, generate_response):
+        generate_response.side_effect = [
+            ('Java response', None),
+            ('Java follow-up', None),
+            ('Python response', None),
+        ]
+        first_request = APIRequestFactory().post('/api/chat/', {'message': 'I want Java.'}, format='json')
+        first_response = ChatAPIView.as_view()(first_request)
+        conversation_id = first_response.data['conversation_id']
+
+        second_request = APIRequestFactory().post(
+            '/api/chat/',
+            {'message': 'Current experience 0.', 'conversation_id': conversation_id},
+            format='json',
+        )
+        ChatAPIView.as_view()(second_request)
+        other_request = APIRequestFactory().post('/api/chat/', {'message': 'I want Python.'}, format='json')
+        ChatAPIView.as_view()(other_request)
+
+        first_history = generate_response.call_args_list[1].args[1]
+        second_history = generate_response.call_args_list[2].args[1]
+        self.assertEqual([message.message for message in first_history], ['I want Java.', 'Java response'])
+        self.assertEqual([message.message for message in second_history], [])
+        self.assertEqual(ChatMessage.objects.filter(conversation_id=conversation_id).count(), 4)
