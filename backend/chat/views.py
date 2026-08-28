@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 
 from .models import ChatMessage
 from .serializers import ChatRequestSerializer
-from .services import GeminiConfigurationError, generate_learning_response
+from .services import GeminiConfigurationError, GeminiResponseError, generate_learning_response
 
 
 class ChatAPIView(APIView):
@@ -17,6 +17,8 @@ class ChatAPIView(APIView):
             ai_response, roadmap = generate_learning_response(user_message)
         except GeminiConfigurationError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except GeminiResponseError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         except Exception:
             return Response(
                 {'error': 'AI service is temporarily unavailable. Please try again shortly.'},
