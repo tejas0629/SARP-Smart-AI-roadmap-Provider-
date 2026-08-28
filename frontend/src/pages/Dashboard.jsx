@@ -13,6 +13,7 @@ const welcome = {
 export default function Dashboard() {
   const [messages, setMessages] = useState([welcome]);
   const [roadmap, setRoadmap] = useState(null);
+  const [conversationId, setConversationId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const handleSend = async (content) => {
@@ -21,7 +22,8 @@ export default function Dashboard() {
     setLoading(true);
     setError('');
     try {
-      const data = await sendChatMessage(content);
+      const data = await sendChatMessage(content, conversationId);
+      setConversationId(data.conversation_id);
       setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: data.response }]);
       if (data.roadmap) setRoadmap(data.roadmap);
     } catch (err) {
@@ -41,6 +43,7 @@ export default function Dashboard() {
           onClear={() => {
             setMessages([welcome]);
             setRoadmap(null);
+            setConversationId(null);
             setError('');
           }}
           loading={loading}

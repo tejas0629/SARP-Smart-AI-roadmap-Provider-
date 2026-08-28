@@ -96,7 +96,26 @@ def _is_temporary_gemini_error(exc):
     )
 
 
-def _generate_groq_response(message):
+def _provider_history(message, conversation_history):
+    if not conversation_history:
+        return message
+    return [
+        {'role': 'user' if item.role == 'user' else 'model', 'parts': [{'text': item.message}]}
+        for item in conversation_history
+    ] + [{'role': 'user', 'parts': [{'text': message}]}]
+
+
+def _groq_messages(message, conversation_history):
+    messages = [{'role': 'system', 'content': SYSTEM_PROMPT}]
+    messages.extend(
+        {'role': item.role, 'content': item.message}
+        for item in conversation_history or []
+    )
+    messages.append({'role': 'user', 'content': message})
+    return messages
+
+
+def _generate_groq_response(message, conversation_history=None):
     if not settings.GROQ_API_KEY:
         raise GroqConfigurationError('Groq API key is not configured. Set GROQ_API_KEY in .env.')
     if not settings.GROQ_MODEL:
@@ -106,10 +125,7 @@ def _generate_groq_response(message):
         client = Groq(api_key=settings.GROQ_API_KEY)
         result = client.chat.completions.create(
             model=settings.GROQ_MODEL,
-            messages=[
-                {'role': 'system', 'content': SYSTEM_PROMPT},
-                {'role': 'user', 'content': message},
-            ],
+            messages=_groq_messages(message, conversation_history),
             response_format={'type': 'json_object'},
         )
     except Exception as exc:
@@ -127,7 +143,7 @@ def _generate_groq_response(message):
         raise GroqResponseError(str(exc)) from exc
 
 
-def generate_learning_response(message):
+def generate_learning_response(message, conversation_history=None):
     if not settings.GEMINI_API_KEY:
         raise GeminiConfigurationError('Gemini API key is not configured. Set GEMINI_API_KEY in .env.')
     if not settings.GEMINI_MODEL:
@@ -139,7 +155,7 @@ def generate_learning_response(message):
             logger.info('[Gemini] Calling model: %s', settings.GEMINI_MODEL)
         result = client.models.generate_content(
             model=settings.GEMINI_MODEL,
-            contents=message,
+            contents=_provider_history(message, conversation_history),
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
                 response_mime_type='application/json',
@@ -152,7 +168,7 @@ def generate_learning_response(message):
             logger.error('[Gemini] API call failed: Gemini request could not be completed.')
         if _is_temporary_gemini_error(exc):
             logger.warning('[Gemini] Primary provider unavailable. Switching to Groq fallback.')
-            return _generate_groq_response(message)
+            return _generate_groq_response(message, conversation_history)
         raise
 
     return _parse_provider_response(getattr(result, 'text', ''), 'Gemini')

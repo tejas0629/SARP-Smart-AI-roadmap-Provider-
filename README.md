@@ -25,6 +25,8 @@ React Frontend -> Django REST API -> Google Gemini
 
 Gemini and database credentials remain server-side. The frontend receives only the assistant response and optional roadmap data.
 
+Each chat uses a conversation ID. A new chat creates a new ID; subsequent requests send that ID so Django retrieves and persists only that conversation's ordered messages. The selected conversation history is supplied to Gemini, or to Groq when the existing temporary-failure fallback is used. Conversations remain stored independently in MySQL.
+
 ## Project Structure
 
 ```text
